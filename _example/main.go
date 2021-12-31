@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/tcnksm/go-httpstat"
+	"github.com/jon4hz/go-httpstat"
 )
 
 func main() {

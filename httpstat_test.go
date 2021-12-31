@@ -1,7 +1,6 @@
 package httpstat
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -9,6 +8,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -214,38 +215,37 @@ func TestTotal_Zero(t *testing.T) {
 	}
 }
 
-func TestHTTPStat_Formatter(t *testing.T) {
-	result := Result{
-		DNSLookup:        100 * time.Millisecond,
-		TCPConnection:    100 * time.Millisecond,
-		TLSHandshake:     100 * time.Millisecond,
-		ServerProcessing: 100 * time.Millisecond,
-		contentTransfer:  100 * time.Millisecond,
-
-		NameLookup:    100 * time.Millisecond,
-		Connect:       100 * time.Millisecond,
-		Pretransfer:   100 * time.Millisecond,
-		StartTransfer: 100 * time.Millisecond,
-		total:         100 * time.Millisecond,
-
-		t5: time.Now(),
+func TestConcurrent(t *testing.T) {
+	urls := []string{"https://example.com", "https://duckduckgo.com"}
+	var eg errgroup.Group
+	for _, url := range urls {
+		func(url string) {
+			eg.Go(func() error {
+				return getStat(url)
+			})
+		}(url)
 	}
-
-	want := `DNS lookup:         100 ms
-TCP connection:     100 ms
-TLS handshake:      100 ms
-Server processing:  100 ms
-Content transfer:   100 ms
-
-Name Lookup:     100 ms
-Connect:         100 ms
-Pre Transfer:    100 ms
-Start Transfer:  100 ms
-Total:           100 ms
-`
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "%+v", result)
-	if got := buf.String(); want != got {
-		t.Fatalf("expect to be eq:\n\nwant:\n\n%s\ngot:\n\n%s\n", want, got)
+	if err := eg.Wait(); err != nil {
+		t.Fatal(err)
 	}
+}
+
+func getStat(url string) error {
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return err
+	}
+	var result Result
+	ctx := WithHTTPStat(req.Context(), &result)
+	req = req.WithContext(ctx) // Send request by default HTTP client
+	client := new(http.Client)
+	defer client.CloseIdleConnections()
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	result.End(time.Now())
+	defer res.Body.Close()
+	fmt.Println(result.total)
+	return nil
 }
